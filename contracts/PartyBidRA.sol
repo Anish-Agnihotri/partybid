@@ -58,6 +58,7 @@ contract PartyBid {
     uint256 reservePrice;
     uint256 duration;
     uint256 numSupport;
+    mapping (address => bool) supporter;
   }
 
   // ============ Modifiers ============
@@ -140,7 +141,7 @@ contract PartyBid {
     emit PartyBidPlaced(auctionID, bidAmount); // Emit bid placed
   }
 
-  // ============ ReserveAuctionV3 NFT handling ============
+  // ============ ReserveAuctionV3 NFT re-auctioning ============
 
   /**
    * Returns boolean status of if DAO has won NFT
@@ -150,18 +151,46 @@ contract PartyBid {
     return IERC721(NFTAddress).ownerOf(auctionID) == address(this);
   }
   
-  function NFTVoteForAuction(uint256 _reservePrice, uint256 duration) external onlyIfAuctionWon() returns (uint256) {
-    NFTListingProposals.push(
+  function NFTProposeAuctionListing(uint256 _reservePrice, uint256 duration) external onlyIfAuctionWon() returns (uint256) {
+    // Ensure that caller is a DAO member
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must be a DAO member to propose NFT auction listing.");
+
+    // Collect proposalId based on num(proposals)
+    uint256 proposalId = NFTListingProposals.length;
+
+    // Append new proposal and begin with min. voting weight of proposer
+    NFTListingProposals[proposalId].push(
       msg.sender,
       _reservePrice,
       duration,
       daoStakes[msg.sender]
     );
+
+    // Toggle support of proposal
+    NFTListingProposals[proposalId].supporter[msg.sender] = true;
+
+    return proposalId; // Return proposalId
   }
 
-  function NFTVoteForAuctionListing() external onlyIfAuctionWon() {}
+  function NFTVoteForProposedAuctionListing(uint256 _proposalId) external onlyIfAuctionWon() {
+    // Ensure that caller is a DAO member
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must be a DAO member to propose NFT auction listing.");
+    // Ensure that DAO member has not already voted in favor of proposal
+    require(NFTListingProposals[_proposalId].supporter[msg.sender] != true, "PartyBid: You have already supported this proposal.");
 
-  function NFTListForAuction() external onlyIfAuctionWon() {}
+    NFTListingProposals[_proposalId].numSupport = NFTListingProposals[_proposalId].numSupport.add(daoStakes[msg.sender]);
+    NFTListingProposals[_proposalId].supporter[msg.sender] = true;
+  }
+
+  function NFTListForAuction(uint256 _proposalId) external onlyIfAuctionWon() {
+    // Ensure that caller is a DAO member
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must be a DAO member to propose NFT auction listing.");
+    // Ensure that majority have voted in favor of proposal
+    require(NFTListingProposals[_proposalId].numSupport > bidAmount.div(2), "PartyBid: Missing majority to execute auction proposal.");
+
+    // TODO: list NFT
+    // TODO: nullify proposals
+  }
 
   // ============ Exit the DAO ============
   
