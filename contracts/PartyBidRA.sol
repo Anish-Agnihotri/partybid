@@ -1,16 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.6.8;
 
+// ============ Imports ============
 import { ReserveAuctionV3 } from "../reserve-auction-v3/ReserveAuctionV3.sol";
 import { SafeMath } from "../node_modules/@openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol";
 
+// ============ Interface declerations ============
+interface IWETH {
+  function balanceOf(address src) external view returns (uint256);
+  function transferFrom(address src, address dst, uint256 wad) external returns (bool);
+}
+
+// @Dev: Must use wETH for all outgoing transactions, since returned capital from contract will
+//       always be wETH (due to hard 30,000 imposed gas limitation at ETH transfer layer).
 contract PartyBid {
   // Use OpenZeppelin library for SafeMath
   using SafeMath for uint256;
 
   // ============ Immutable storage ============
 
+  // Address of the Reserve Auction contract to place bid on
   address public immutable ReserveAuctionV3Address;
+
+  // Address of the wETH contract
+  address public immutable wETHAddress;
 
   // ============ Mutable storage ============
 
@@ -31,12 +44,14 @@ contract PartyBid {
 
   constructor(
     address _ReserveAuctionV3Address,
+    address _wETHAddress,
     uint256 _auctionID,
     uint256 _bidAmount,
     uint256 _exitTimeout
   ) public {
     // Initialize immutable memory
     ReserveAuctionV3Address = _ReserveAuctionV3Address;
+    wETHAddress = _wETHAddress;
 
     // Initialize mutable memory
     auctionID = _auctionID;
@@ -79,7 +94,7 @@ contract PartyBid {
 
     // Setup auction contract, place bid, toggle bidding status
     ReserveAuctionV3 auction_contract = ReserveAuctionV3(ReserveAuctionV3Address);
-    auction_contract.createBid.value(bidAmount)(auctionID, bidAmount);
+    auction_contract.createBid{value: bidAmount}(auctionID, bidAmount);
     bidPlaced = true;
   }
 
@@ -89,21 +104,21 @@ contract PartyBid {
 
   // ============ Exit the DAO ============
   
-  function _exitIfBidFailed() internal payable {
+  function _exitIfBidFailed() internal {
     require(bidPlaced == true); // check if bid was placed (double check from caller)
-    require(address(this).balance == bidAmount); // contract should have been returned funds if not top bidder
     require(daoStakes[msg.sender] > 0); // check if individual is a dao member
-
-    payable(msg.sender).send(daoStakes[msg.sender]);
+    require(IWETH(wETHAddress).balanceOf(address(this)) > 0); // contract should have been returned funds if not top bidder
+    
+    IWETH(wETHAddress).transferFrom(address(this), msg.sender, daoStakes[msg.sender]);
     daoStakes[msg.sender] = 0;
   }
 
-  function _exitIfTimeoutPassed() internal payable {
+  function _exitIfTimeoutPassed() internal {
     require(bidPlaced == false); // check if bid was not placed (double check from caller)
     require(block.timestamp >= exitTimeout); // make sure current time > maxTimeout
     require(daoStakes[msg.sender] > 0); // check if individual is a dao member
 
-    payable(msg.sender).send(daoStakes[msg.sender]);
+    payable(msg.sender).transfer(daoStakes[msg.sender]);
     daoStakes[msg.sender] = 0;
   }
 
