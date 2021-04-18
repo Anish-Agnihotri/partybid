@@ -45,7 +45,7 @@ contract PartyBid {
   uint256 public currentRaisedAmount;
   // Maximum time to wait for dao members to fill contract before enabling exit
   uint256 public exitTimeout; 
-  // Price set by DAO members to sell NFT
+  // Price set by DAO members to sell NFT (default: max(uint256) in constructor)
   uint256 public NFTSalePrice;
   // Toggled when DAO places bid to purchase a ReserveAuctionV3 item
   bool public bidPlaced;
@@ -62,9 +62,9 @@ contract PartyBid {
 
   // Individual price proposals
   struct NFTPriceProposal {
-    address proposer;
-    uint256 price;
-    uint256 aggregateSupport;
+    address proposer; // Proposing DAO member
+    uint256 price; // Price proposed for NFT sale
+    uint256 aggregateSupport; // sum(balance(voting_addresses_in_favor))
   }
 
   // ============ Modifiers ============
@@ -79,11 +79,19 @@ contract PartyBid {
   // ============ Events ============
 
   // Address of a new DAO member and their entry share
-  event PartyJoined(address indexed, uint256 value);
+  event PartyJoined(address indexed member, uint256 value);
   // Value of newly placed bid on ReserveAuctionV3 item
   event PartyBidPlaced(uint256 auctionID, uint256 value);
   // Address and exit share of DAO member, along with reason for exit
-  event PartyMemberExited(address indexed, uint256 value, bool postFailure);
+  event PartyMemberExited(address indexed member, uint256 value, bool postFailure);
+  // Proposer of new NFT sale price and proposed price
+  event PartyNFTPriceProposed(address indexed proposer, uint256 price);
+  // NFT sale price proposal ID and voter address
+  event PartyNFTPriceProposalVoted(uint256 indexed proposalId, address voter);
+  // Executed NFT sale price proposal ID and price
+  event PartyNFTPriceProposalExecuted(uint256 indexed proposalId, uint256 price);
+  // NFT sale capturing purchasing address, price
+  event PartyNFTSold(address indexed buyer, uint256 price);
 
   // ============ Constructor ============
 
@@ -159,10 +167,13 @@ contract PartyBid {
     return IERC721(NFTAddress).ownerOf(auctionID) == address(this);
   }
 
+  /**
+   * Enables DAO member to propose a new price to sell the won NFT for
+   */
   function NFTProposePrice(uint256 _price) external onlyIfAuctionWon() returns (uint256) {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
-    
+
     // Collect proposalId from proposals array length
     uint256 proposalId = NFTPriceProposals.length;
 
@@ -170,8 +181,13 @@ contract PartyBid {
     NFTPriceProposals[proposalId] = NFTPriceProposal(
       msg.sender,
       _price,
+      // Existing aggregate support starts at power(proposer)
       daoStakes[msg.sender]
     );
+
+    // Emit both new proposal and new voter (proposer)
+    emit PartyNFTPriceProposed(msg.sender, _price);
+    emit PartyNFTPriceProposalVoted(proposalId, msg.sender);
 
     // Update supporters mapping
     NFTPriceProposalSupporters[proposalId][msg.sender] = true;
@@ -179,55 +195,80 @@ contract PartyBid {
     return proposalId;
   }
 
+  /**
+   * Enables DAO member to vote in favor of a proposal that proposes a new price to sell the won NFT for
+   */
   function NFTVoteForPriceProposal(uint256 _proposalId) external onlyIfAuctionWon() {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
     // Ensure that caller has not already voted in favor of proposal
     require(NFTPriceProposalSupporters[_proposalId][msg.sender] != true, "PartyBid: Cannot vote for a proposal twice.");
 
-    // Increment aggregate support
+    // Increment aggregate support with power(voter)
     NFTPriceProposals[_proposalId].aggregateSupport = NFTPriceProposals[_proposalId].aggregateSupport.add(daoStakes[msg.sender]);
 
     // Update supporters mapping
     NFTPriceProposalSupporters[_proposalId][msg.sender] = true;
+
+    emit PartyNFTPriceProposalVoted(_proposalId, msg.sender);
   }
 
+  /**
+   * Set the standing purchase price for the won NFT
+   */
   function NFTSetPrice(uint256 _proposalId) external onlyIfAuctionWon() {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
-    // Ensure that proposal has > 50% of supporting vote
-    require(NFTPriceProposals[_proposalId].aggregateSupport > currentRaised.div(2), "PartyBid: Insufficient support to set NFT price.");
+    // Ensure that the proposal being enacted has > 50% of supporting DAO vote
+    require(NFTPriceProposals[_proposalId].aggregateSupport > currentRaisedAmount.div(2), "PartyBid: Insufficient support to set NFT price.");
 
     // Update NFT price
     NFTSalePrice = NFTPriceProposals[_proposalId].price;
+
+    // Nullify proposal aggregate support to prevent resetting price via same proposal in future
+    NFTPriceProposals[_proposalId].aggregateSupport = 0;
+
+    emit PartyNFTPriceProposalExecuted(_proposalId, NFTSalePrice);
   }
 
+  /**
+   * Enables third-party to purchase won NFT at currently set price
+   */
   function buyNFTAtPrice(uint256 _value) external payable onlyIfAuctionWon() {
     // Ensure matching of bid value to ETH sent to contract
     require(msg.value == _value, "PartyBid: Bid amount does not match spent ETH.");
-    // Ensure bid value is = NFT price
+    // Ensure bid value is = NFT sale price set by DAO members
     require(msg.value == NFTSalePrice, "PartyBid: Bid is below NFT sale price.");
 
     // Transfer NFT to bidder
     IERC721(NFTAddress).transferFrom(address(this), msg.sender, auctionID);
-
     NFTResold = true;
+
+    emit PartyNFTSold(msg.sender, msg.value);
   }
 
   // ============ Exit the DAO ============
 
+  /**
+   * Exit DAO if bid was won, and NFT was resold for NFTSalePrice
+   */
   function _exitPostSale() internal {
-    // require resold to have been true
-    require(NFTResolt = true);
-    // ensure contract has funds to pay out
-    require(address(this).balance > 0);
+    // Require NFT to have already have been resold
+    require(NFTResold = true, "PartyBid: NFT has not yet been resold.");
+    // Failsafe: Ensure contract has non-zero funds to payout DAO members
+    require(address(this).balance > 0, "PartyBid: DAO is insolvent.");
 
+    // Send calculated share of NFTSalePrice based on DAO membership share
     payable(msg.sender).transfer(
+      // Multiply final NFT sale price
       NFTSalePrice.mul(
-        daoStakes[msg.sender].div(currentRaised)
+        // By (dao_share / total)
+        daoStakes[msg.sender].div(currentRaisedAmount)
       )
     );
+    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false);
 
+    // Nullify member DAO share
     daoStakes[msg.sender] = 0;
   }
   
@@ -276,6 +317,7 @@ contract PartyBid {
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
 
     if (NFTResold) {
+      // If NFT has already been resold, allow post-sale exit
       _exitPostSale();
     } else {
       if (bidPlaced) {
