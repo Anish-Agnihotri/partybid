@@ -49,12 +49,14 @@ contract PartyBid {
   uint256 public NFTSalePriceFloor;
   // Toggled when DAO places bid to purchase a ReserveAuctionV3 item
   bool public bidPlaced;
+  // Toggled when DAO has resold won ReserveAuctionV3 item (to enable exit liquidity)
+  bool public NFTResold;
   // Stakes of individual dao members
   mapping (address => uint256) public daoStakes;
   // List of active proposals to set NFT price floor
   NFTPriceFloorProposal[] public NFTPriceFloorProposals;
   // List of supporters for each active proposal
-  mapping (address => (uint256 => bool)) NFTPriceFloorProposalSupporters;
+  mapping (uint256 => mapping (address => bool)) NFTPriceFloorProposalSupporters;
 
   // ============ Structs ============
 
@@ -102,6 +104,7 @@ contract PartyBid {
     currentRaisedAmount = 0;
     exitTimeout = _exitTimeout;
     bidPlaced = false;
+    NFTResold = false;
     NFTSalePriceFloor = 2**256 - 1;
   }
 
@@ -171,7 +174,7 @@ contract PartyBid {
     );
 
     // Update supporters mapping
-    NFTPriceFloorProposalSupporters[msg.sender][proposalId] = true;
+    NFTPriceFloorProposalSupporters[proposalId][msg.sender] = true;
 
     return proposalId;
   }
@@ -180,19 +183,19 @@ contract PartyBid {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
     // Ensure that caller has not already voted in favor of proposal
-    require(NFTPriceFloorProposalSupporters[msg.sender][_proposalId] != true, "PartyBid: Cannot vote for a proposal twice.");
+    require(NFTPriceFloorProposalSupporters[_proposalId][msg.sender] != true, "PartyBid: Cannot vote for a proposal twice.");
 
     // Increment aggregate support
     NFTPriceFloorProposals[_proposalId].aggregateSupport = NFTPriceFloorProposals[_proposalId].aggregateSupport.add(daoStakes[msg.sender]);
 
     // Update supporters mapping
-    NFTPriceFloorProposalSupporters[msg.sender][_proposalId] = true;
+    NFTPriceFloorProposalSupporters[_proposalId][msg.sender] = true;
   }
 
   function NFTSetPriceFloor(uint256 _proposalId) external onlyIfAuctionWon() {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
-    // Ensure that proposal has > 50% of supporting vote
+    // Ensure that proposal has > 50% of supporting vote (FIXME: is bidAmount the right metric here?)
     require(NFTPriceFloorProposals[_proposalId].aggregateSupport > bidAmount.div(2), "PartyBid: Insufficient support to set price floor.");
 
     // Update NFT price floor
@@ -207,6 +210,8 @@ contract PartyBid {
 
     // Transfer NFT to bidder
     IERC721(NFTAddress).transferFrom(address(this), msg.sender, auctionID);
+
+    NFTResold = true;
   }
 
   // ============ Exit the DAO ============
@@ -223,6 +228,7 @@ contract PartyBid {
 
     // Transfer wETH from contract to DAO member and emit event
     IWETH(wETHAddress).transferFrom(address(this), msg.sender, daoStakes[msg.sender]);
+    currentRaisedAmount = currentRaisedAmount.sub(daoStakes[msg.sender]);
     emit PartyMemberExited(msg.sender, daoStakes[msg.sender], true);
 
     // Nullify member DAO share
@@ -240,6 +246,7 @@ contract PartyBid {
 
     // Transfer ETH from contract to DAO member and emit event
     payable(msg.sender).transfer(daoStakes[msg.sender]);
+    currentRaisedAmount = currentRaisedAmount.sub(daoStakes[msg.sender]);
     emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false);
 
     // Nullify member DAO share
