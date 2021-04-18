@@ -2,16 +2,18 @@
 pragma solidity 0.6.8;
 
 // ============ Imports ============
+
 import { ReserveAuctionV3 } from "../reserve-auction-v3/ReserveAuctionV3.sol";
 import { SafeMath } from "../node_modules/@openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol";
 
 // ============ Interface declerations ============
+
 interface IWETH {
   function balanceOf(address src) external view returns (uint256);
   function transferFrom(address src, address dst, uint256 wad) external returns (bool);
 }
 
-// @Dev: Must use wETH for all outgoing transactions, since returned capital from contract will
+// @dev: Must use wETH for all outgoing transactions, since returned capital from contract will
 //       always be wETH (due to hard 30,000 imposed gas limitation at ETH transfer layer).
 contract PartyBid {
   // Use OpenZeppelin library for SafeMath
@@ -21,7 +23,6 @@ contract PartyBid {
 
   // Address of the Reserve Auction contract to place bid on
   address public immutable ReserveAuctionV3Address;
-
   // Address of the wETH contract
   address public immutable wETHAddress;
 
@@ -82,7 +83,7 @@ contract PartyBid {
   // ============ Place a bid from DAO ============
 
   /**
-   * Execute bid placement, as a DAO member (so long as required conditions are met)
+   * Execute bid placement, as DAO member, so long as required conditions are met
    */
   function placeBid() external {
     // Dont allow placing a bid if already placed
@@ -104,30 +105,47 @@ contract PartyBid {
 
   // ============ Exit the DAO ============
   
+  /**
+   * Exit DAO if bid was beaten
+   * @dev Capital returned in form of wETH due to 30,000 gas transfer limit imposed by ReserveAuctionV3
+   */
   function _exitIfBidFailed() internal {
-    require(bidPlaced == true); // check if bid was placed (double check from caller)
-    require(daoStakes[msg.sender] > 0); // check if individual is a dao member
-    require(IWETH(wETHAddress).balanceOf(address(this)) > 0); // contract should have been returned funds if not top bidder
-    
+    // Dont allow exiting via this function if bid hasn't been placed
+    require(bidPlaced == true, "PartyBid: Bid must be placed to exit via failure.");
+    // Ensure that contract wETH balance is > 0 (implying that either funds have been returned or wETH airdropped)
+    require(IWETH(wETHAddress).balanceOf(address(this)) > 0, "PartyBid: DAO bid has not been beaten or refunded yet.");
+
+    // Transfer wETH from contract to DAO member and nullify member DAO share
     IWETH(wETHAddress).transferFrom(address(this), msg.sender, daoStakes[msg.sender]);
     daoStakes[msg.sender] = 0;
   }
 
+  /**
+   * Exit DAO if deposit timeout has passed
+   */
   function _exitIfTimeoutPassed() internal {
-    require(bidPlaced == false); // check if bid was not placed (double check from caller)
-    require(block.timestamp >= exitTimeout); // make sure current time > maxTimeout
-    require(daoStakes[msg.sender] > 0); // check if individual is a dao member
+    // Dont allow exiting via this function if bid has been placed
+    require(bidPlaced == false, "PartyBid: Bid must be pending to exit via timeout.");
+    // Ensure that current time > deposit timeout
+    require(block.timestamp >= exitTimeout, "PartyBid: Exit timeout not met.");
 
+    // Transfer ETH from contract to DAO member and nullify member DAO share
     payable(msg.sender).transfer(daoStakes[msg.sender]);
     daoStakes[msg.sender] = 0;
   }
 
+  /**
+   * Public utility function to call internal exit functions based on bid state
+   */
   function exit() external payable {
-    require(daoStakes[msg.sender] > 0); // check if individual is a dao member
+    // Ensure that caller is a DAO member
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
 
     if (bidPlaced) {
+      // If bid has been placed, allow exit on bid failure
       _exitIfBidFailed();
     } else {
+      // Else, allow exit when exit timeout window has passed
       _exitIfTimeoutPassed();
     }
   }
