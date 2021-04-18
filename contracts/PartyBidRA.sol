@@ -3,8 +3,8 @@ pragma solidity 0.6.8;
 
 // ============ Imports ============
 
-import { ReserveAuctionV3 } from "../reserve-auction-v3/ReserveAuctionV3.sol";
-import { SafeMath } from "../node_modules/@openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol";
+import { ReserveAuctionV3 } from "./flattened/ReserveAuctionV3.sol";
+import { SafeMath } from "@openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol";
 
 // ============ Interface declarations ============
 
@@ -167,7 +167,7 @@ contract PartyBid {
     uint256 proposalId = NFTPriceFloorProposals.length;
 
     // Append new proposal with existing support starting at power(msg.sender)
-    NFTPriceFloorProposals[proposalId].push(
+    NFTPriceFloorProposals[proposalId] = NFTPriceFloorProposal(
       msg.sender,
       _floor,
       daoStakes[msg.sender]
@@ -196,7 +196,7 @@ contract PartyBid {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
     // Ensure that proposal has > 50% of supporting vote (FIXME: is bidAmount the right metric here?)
-    require(NFTPriceFloorProposals[_proposalId].aggregateSupport > bidAmount.div(2), "PartyBid: Insufficient support to set price floor.");
+    require(NFTPriceFloorProposals[_proposalId].aggregateSupport > currentRaised.div(2), "PartyBid: Insufficient support to set price floor.");
 
     // Update NFT price floor
     NFTSalePriceFloor = NFTPriceFloorProposals[_proposalId].floor;
@@ -205,8 +205,8 @@ contract PartyBid {
   function buyNFTAtPriceFloor(uint256 _value) external payable onlyIfAuctionWon() {
     // Ensure matching of bid value to ETH sent to contract
     require(msg.value == _value, "PartyBid: Bid amount does not match spent ETH.");
-    // Ensure bid value is >= NFT price floor
-    require(msg.value >= NFTSalePriceFloor, "PartyBid: Bid is below NFT sale price floor.");
+    // Ensure bid value is = NFT price floor
+    require(msg.value == NFTSalePriceFloor, "PartyBid: Bid is below NFT sale price floor.");
 
     // Transfer NFT to bidder
     IERC721(NFTAddress).transferFrom(address(this), msg.sender, auctionID);
@@ -215,6 +215,21 @@ contract PartyBid {
   }
 
   // ============ Exit the DAO ============
+
+  function _exitPostSale() internal {
+    // require resold to have been true
+    require(NFTResolt = true);
+    // ensure contract has funds to pay out
+    require(address(this).balance > 0);
+
+    payable(msg.sender).transfer(
+      NFTSalePriceFloor.mul(
+        daoStakes[msg.sender].div(currentRaised)
+      )
+    );
+
+    daoStakes[msg.sender] = 0;
+  }
   
   /**
    * Exit DAO if bid was beaten
@@ -260,12 +275,16 @@ contract PartyBid {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
 
-    if (bidPlaced) {
-      // If bid has been placed, allow exit on bid failure
-      _exitIfBidFailed();
+    if (NFTResold) {
+      _exitPostSale();
     } else {
-      // Else, allow exit when exit timeout window has passed
-      _exitIfTimeoutPassed();
+      if (bidPlaced) {
+        // If bid has been placed, allow exit on bid failure
+        _exitIfBidFailed();
+      } else {
+        // Else, allow exit when exit timeout window has passed
+        _exitIfTimeoutPassed();
+      }
     }
   }
 }
