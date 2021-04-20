@@ -2,7 +2,7 @@
 
 ## Introduction
 
-[Direct link to PartyBid contract.](https://github.com/Anish-Agnihotri/partybid/blob/aa/general-nft/contracts/PartyBidRA.sol)
+[Direct link to PartyBid contract.](https://github.com/Anish-Agnihotri/partybid/blob/master/contracts/PartyBidRA.sol)
 
 Inspired by [Denis Nazarov's](https://twitter.com/Iiterature/status/1383238473767813125) tweet about automatic DAO's to bid on NFTs.
 
