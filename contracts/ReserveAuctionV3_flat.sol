@@ -4,7 +4,30 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.6.8;
+pragma experimental ABIEncoderV2;
 
+// File: @openzeppelin/contracts/utils/introspection/IERC165.sol
+
+/**
+ * @dev Interface of the ERC165 standard, as defined in the
+ * https://eips.ethereum.org/EIPS/eip-165[EIP].
+ *
+ * Implementers can declare support of contract interfaces, which can then be
+ * queried by others ({ERC165Checker}).
+ *
+ * For an implementation, see {ERC165}.
+ */
+interface IERC165 {
+    /**
+     * @dev Returns true if this contract implements the interface defined by
+     * `interfaceId`. See the corresponding
+     * https://eips.ethereum.org/EIPS/eip-165#how-interfaces-are-identified[EIP section]
+     * to learn more about how these ids are created.
+     *
+     * This function call must use less than 30 000 gas.
+     */
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+}
 
 /**
  * @dev Required interface of an ERC721 compliant contract.
@@ -130,39 +153,7 @@ interface IERC721 is IERC165 {
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external;
 }
 
-// File: @openzeppelin/contracts/utils/introspection/IERC165.sol
-
-// SPDX-License-Identifier: MIT
-
-pragma solidity ^0.6.8;
-
-/**
- * @dev Interface of the ERC165 standard, as defined in the
- * https://eips.ethereum.org/EIPS/eip-165[EIP].
- *
- * Implementers can declare support of contract interfaces, which can then be
- * queried by others ({ERC165Checker}).
- *
- * For an implementation, see {ERC165}.
- */
-interface IERC165 {
-    /**
-     * @dev Returns true if this contract implements the interface defined by
-     * `interfaceId`. See the corresponding
-     * https://eips.ethereum.org/EIPS/eip-165#how-interfaces-are-identified[EIP section]
-     * to learn more about how these ids are created.
-     *
-     * This function call must use less than 30 000 gas.
-     */
-    function supportsInterface(bytes4 interfaceId) external view returns (bool);
-}
-
 // File: interfaces/IMarket.sol
-
-// SPDX-License-Identifier: GPL-3.0
-
-pragma solidity ^0.6.8;
-pragma experimental ABIEncoderV2;
 
 
 /**
@@ -374,9 +365,7 @@ interface IMarket {
     function acceptBid(uint256 tokenId, Bid calldata expectedBid) external;
 }
 
-// File: https://raw.githubusercontent.com/itinance/openzeppelin-solidity/master/contracts/utils/ReentrancyGuard.sol
-
-pragma solidity ^0.6.8;
+// File: contracts/ReentrancyGuard.sol
 
 
 /**
@@ -406,10 +395,7 @@ contract ReentrancyGuard {
   }
 
 }
-
 // File: @openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol
-
-pragma solidity ^0.6.0;
 
 /**
  * @dev Wrappers over Solidity's arithmetic operations with added overflow
@@ -562,16 +548,10 @@ library SafeMath {
 
 // File: contracts/ReserveAuctionV3.sol
 
-// SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.6.8;
-pragma experimental ABIEncoderV2;
-
 // OpenZeppelin library for performing math operations without overflows.
 
 // OpenZeppelin security library for preventing reentrancy attacks.
 
-    ReentrancyGuard
-} from "https://raw.githubusercontent.com/itinance/openzeppelin-solidity/master/contracts/utils/ReentrancyGuard.sol";
 // For interacting with Zora's Market contract.
 
 // For checking `supportsInterface`.

@@ -4,8 +4,9 @@ pragma experimental ABIEncoderV2;
 
 // ============ Imports ============
 
+import "./ABDKMath64x64.sol";
 import { SafeMath } from "@openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol";
-import { ReserveAuctionV3, IMarket, IMediaModified, Decimal } from "../ReserveAuctionV3_flat.sol";
+import { ReserveAuctionV3, IMarket, IMediaModified, Decimal } from "./ReserveAuctionV3_flat.sol";
 
 // ============ Interface declarations ============
 
@@ -21,6 +22,11 @@ interface IWETH {
 interface IERC721 {
   function ownerOf(uint256 tokenId) external view returns (address);
   function transferFrom(address from, address to, uint256 tokenId) external view;
+}
+
+// IMedia
+interface IMediaExtended {
+  function acceptBid(uint256 tokenId, IMarket.Bid calldata bid) external;
 }
 
 // @dev: Must use wETH for all outgoing transactions, since returned capital from contract will
@@ -67,6 +73,7 @@ contract PartyBid {
   struct BidProposal {
     address proposer; // Proposing DAO member
     address bidder; // Proposed bidder to accept bid from
+    uint256 amount; // Proposed bid amount
     uint256 aggregateSupport; // sum(balance(voting_addresses_in_favor))
   }
 
@@ -87,6 +94,12 @@ contract PartyBid {
   event PartyBidPlaced(uint256 auctionID, uint256 value);
   // Address and exit share of DAO member, along with reason for exit
   event PartyMemberExited(address indexed member, uint256 value, bool postFailure);
+  // Value of new proposal ID, proposer, Zora bidder, and Zora bidder bid amount
+  event PartyProposeNewZoraBid(uint256 indexed proposalId, address proposer, address bidder, uint256 amount);
+  // Value of proposal ID, and voter
+  event PartyProposalVote(uint256 indexed proposalId, address voter);
+  // Value of executed sale amount
+  event PartyExecuteSale(uint256 amount);
 
   // ============ Constructor ============
 
@@ -162,21 +175,31 @@ contract PartyBid {
   }
 
   function DAOProposeZoraBid(address _bidder) external onlyIfAuctionWon() returns (uint256) {
+    IMarket.Bid memory bid = IMarket(IMediaModified(NFTAddress).marketContract()).bidForTokenBidder(auctionID, _bidder);
+    
+    // Ensure that bid from bidder exists
+    require(bid.bidder == _bidder, "not same addy");
+    // Ensure that bid currency is Wrapped Ether
+    require(bid.currency == wETHAddress, "not weth");
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
 
     // Collect proposalId from proposals array length
     uint256 proposalId = BidProposals.length;
 
-    BidProposals[proposalId] = BidProposal(
+    BidProposals.push(BidProposal(
       msg.sender,
       _bidder,
+      bid.amount,
       // Existing aggregate support starts at power(proposer)
       daoStakes[msg.sender]
-    );
+    ));
 
     // Update supporters mapping
     BidProposalSupporters[proposalId][msg.sender] = true;
+
+    emit PartyProposeNewZoraBid(proposalId, msg.sender, _bidder, bid.amount);
+    emit PartyProposalVote(proposalId, msg.sender);
 
     return proposalId;
   }
@@ -192,51 +215,39 @@ contract PartyBid {
 
     // Update supporters mapping
     BidProposalSupporters[_proposalId][msg.sender] = true;
+
+    emit PartyProposalVote(_proposalId, msg.sender);
   }
 
   function DAOExecuteZoraBid(uint256 _proposalId) external onlyIfAuctionWon() {
     // Ensure that caller is a DAO member
     require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
     // Ensure that the proposal being enacted has > 50% of supporting DAO vote
-    require(BidProposals[_proposalId].aggregateSupport > currentRaisedAmount.div(2), "PartyBid: Insufficient support to set NFT price.");
-  
-    // Accept Bid from IMarket
+    require(BidProposals[_proposalId].aggregateSupport > currentRaisedAmount.div(2), "PartyBid: Insufficient support to accept Zora bid.");
 
-    // FIXME: Update NFT price
-    //NFTSalePrice = NFTPriceProposals[_proposalId].price;
+    // Collect Bid from IMedia
+    IMarket.Bid memory bid = IMarket(IMediaModified(NFTAddress).marketContract()).bidForTokenBidder(auctionID, BidProposals[_proposalId].bidder);
+    
+    // Ensure that bid amount has not changed 
+    require(BidProposals[_proposalId].amount == bid.amount, "PartyBid: bid changed");
+
+    // Collect bidshares to calculate NFTResoldValue
+    IMarket.BidShares memory bidShares = IMarket(IMediaModified(NFTAddress).marketContract()).bidSharesForToken(auctionID);
+
+    // Accept bid from Imedia
+    IMediaExtended(NFTAddress).acceptBid(auctionID, bid);
+
+    // Update NFT price 
     NFTResold = true;
+    NFTResoldValue = ABDKMath64x64.mulu(
+      ABDKMath64x64.divu(bidShares.owner.value, 100000000000000000000),
+      bid.amount
+    );
 
     // Nullify proposal aggregate support to prevent resetting price via same proposal in future
     BidProposals[_proposalId].aggregateSupport = 0;
-  }
 
-  function setNFTBid(uint256 _value) external payable onlyIfAuctionWon() {
-    if (IWETH(wETHAddress).balanceOf(msg.sender) < _value) {
-      // Ensure matching of bid value to ETH sent to contract
-      require(msg.value == _value, "PartyBid: Bid amount does not match spent ETH.");
-
-      IWETH(wETHAddress).deposit{value: _value.sub(IWETH(wETHAddress).balanceOf(msg.sender))}();
-    }
-
-    IWETH(wETHAddress).approve(IMediaModified(NFTAddress).marketContract(), _value);
-
-    IMarket.Bid memory bid = IMarket.Bid(
-      _value,
-      wETHAddress,
-      tx.origin,
-      tx.origin,
-      Decimal.D256(0)
-    );
-
-    IMarket(IMediaModified(NFTAddress).marketContract()).setBid(
-      auctionID,
-      bid,
-      tx.origin
-    );
-  }
-
-  function removeNFTBid() external onlyIfAuctionWon() {
-    IMarket(IMediaModified(NFTAddress).marketContract()).removeBid(auctionID, tx.origin);
+    emit PartyExecuteSale(NFTResoldValue);
   }
 
   // ============ Exit the DAO ============
@@ -253,10 +264,11 @@ contract PartyBid {
     // Send calculated share of NFTSalePrice based on DAO membership share
     IWETH(wETHAddress).transferFrom(address(this), msg.sender,
       // Multiply final NFT sale price
-      NFTResoldValue.mul(
-        // By (dao_share / total)
-        daoStakes[msg.sender].div(currentRaisedAmount)
-      )
+      ABDKMath64x64.mulu(
+          // Multiply (dao_share / total)
+          ABDKMath64x64.divu(daoStakes[msg.sender], currentRaisedAmount),
+          // by final NFT sale price
+            NFTResoldValue)
     );
     emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false);
 
