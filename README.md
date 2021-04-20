@@ -1,3 +1,7 @@
+<img src="https://i.imgur.com/HYb9lcg.png" alt="PartyBid logo" width="200" />
+<br />
+<br />
+
 ## Introduction
 
 [Direct link to PartyBid contract.](https://github.com/Anish-Agnihotri/partybid/blob/aa/general-nft/contracts/PartyBidRA.sol)
@@ -38,6 +42,8 @@ npx hardhat compile
 
 Full-form tests coming as soon as I get a chance to sit down and write out all possible state transitions.
 
+The code has been tested extensively against Rinkeby deployments, but I still urge caution when using with real capital since this code is both unaudited and written by a non-full-time Solidity enthusiast.
+
 ## Considerations
 
 Due to the simplistic nature of this mvp, there are a few considerations made:
@@ -48,5 +54,5 @@ Due to the simplistic nature of this mvp, there are a few considerations made:
 
 ## Extensions
 
-1. There is very-well the possibility to have the DAO itself issue a reserve auction with the won NFT. Sort of like a meta play.
-2. Extension to non-Zora NFTs is also possible with some additional logic to create either: (1) an in-contract bid management system, or (2) a price floor at which any third-party can purchase an NFT. A rudimentary, WIP example is present in [aa/general-nft](https://github.com/Anish-Agnihotri/partybid/tree/aa/general-nft).
+1. There is very-well the future possibility to have the DAO itself begin a reserve auction with the won NFT. Sort of like a meta play with RA to RA, and movement between DAOs.
+2. Extension to non-Zora NFTs is also possible with some additional logic to create either: (1) an in-contract bid management system, or (2) a price floor at which any third-party can purchase an NFT. A rudimentary, WIP example of the latter is being developed in [aa/general-nft](https://github.com/Anish-Agnihotri/partybid/tree/aa/general-nft).
