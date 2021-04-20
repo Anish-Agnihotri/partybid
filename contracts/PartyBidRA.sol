@@ -24,7 +24,7 @@ interface IERC721 {
   function transferFrom(address from, address to, uint256 tokenId) external view;
 }
 
-// IMedia
+// IMedia (with bid acceptance extension)
 interface IMediaExtended {
   function acceptBid(uint256 tokenId, IMarket.Bid calldata bid) external;
 }
@@ -164,7 +164,7 @@ contract PartyBid {
     emit PartyBidPlaced(auctionID, bidAmount); // Emit bid placed
   }
 
-  // ============ ReserveAuctionV3 NFT re-auctioning ============
+  // ============ ReserveAuctionV3 NFT re-auctioning via Zora Market ============
 
   /**
    * Returns boolean status of if DAO has won NFT
@@ -174,15 +174,23 @@ contract PartyBid {
     return IERC721(NFTAddress).ownerOf(auctionID) == address(this);
   }
 
+  /**
+   * Propose a new Zora bid for acceptance to the DAO
+   */
   function DAOProposeZoraBid(address _bidder) external onlyIfAuctionWon() returns (uint256) {
-    IMarket.Bid memory bid = IMarket(IMediaModified(NFTAddress).marketContract()).bidForTokenBidder(auctionID, _bidder);
+    // Collect Zora Bid
+    IMarket.Bid memory bid = IMarket(
+      // Collect Zora Market contract from IMedia storage
+      IMediaModified(NFTAddress).marketContract()
+    // Collect bid by bidder address
+    ).bidForTokenBidder(auctionID, _bidder);
     
     // Ensure that bid from bidder exists
-    require(bid.bidder == _bidder, "not same addy");
+    require(bid.bidder == _bidder, "PartyBid: Bidder does not have an active bid on NFT.");
     // Ensure that bid currency is Wrapped Ether
-    require(bid.currency == wETHAddress, "not weth");
+    require(bid.currency == wETHAddress, "PartyBid: Bidder has bid in a non-wETH token.");
     // Ensure that caller is a DAO member
-    require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must be a DAO member to propose a new Zora bid.");
 
     // Collect proposalId from proposals array length
     uint256 proposalId = BidProposals.length;
@@ -198,15 +206,18 @@ contract PartyBid {
     // Update supporters mapping
     BidProposalSupporters[proposalId][msg.sender] = true;
 
-    emit PartyProposeNewZoraBid(proposalId, msg.sender, _bidder, bid.amount);
-    emit PartyProposalVote(proposalId, msg.sender);
+    emit PartyProposeNewZoraBid(proposalId, msg.sender, _bidder, bid.amount); // Emit new bid proposal
+    emit PartyProposalVote(proposalId, msg.sender); // Emit new vote for proposal (from proposal proposer themselves)
 
     return proposalId;
   }
 
+  /**
+   * Vote for a new Zora bid proposal if you have not already
+   */
   function DAOVoteForZoraBidProposal(uint256 _proposalId) external onlyIfAuctionWon() {
     // Ensure that caller is a DAO member
-    require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must be a DAO member to vote for bid proposal.");
     // Ensure that caller has not already voted in favor of proposal
     require(BidProposalSupporters[_proposalId][msg.sender] != true, "PartyBid: Cannot vote for a proposal twice.");
 
@@ -216,12 +227,15 @@ contract PartyBid {
     // Update supporters mapping
     BidProposalSupporters[_proposalId][msg.sender] = true;
 
-    emit PartyProposalVote(_proposalId, msg.sender);
+    emit PartyProposalVote(_proposalId, msg.sender); // Emit new vote for proposal
   }
-
+  
+  /**
+   * Execute a Zora bid proposal assuming it still exists and matches amount in storage
+   */
   function DAOExecuteZoraBid(uint256 _proposalId) external onlyIfAuctionWon() {
     // Ensure that caller is a DAO member
-    require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to exit DAO.");
+    require(daoStakes[msg.sender] > 0, "PartyBid: Must first be a DAO member to execute bid proposal.");
     // Ensure that the proposal being enacted has > 50% of supporting DAO vote
     require(BidProposals[_proposalId].aggregateSupport > currentRaisedAmount.div(2), "PartyBid: Insufficient support to accept Zora bid.");
 
@@ -229,7 +243,7 @@ contract PartyBid {
     IMarket.Bid memory bid = IMarket(IMediaModified(NFTAddress).marketContract()).bidForTokenBidder(auctionID, BidProposals[_proposalId].bidder);
     
     // Ensure that bid amount has not changed 
-    require(BidProposals[_proposalId].amount == bid.amount, "PartyBid: bid changed");
+    require(BidProposals[_proposalId].amount == bid.amount, "PartyBid: Bid amount has changed during proposal voting.");
 
     // Collect bidshares to calculate NFTResoldValue
     IMarket.BidShares memory bidShares = IMarket(IMediaModified(NFTAddress).marketContract()).bidSharesForToken(auctionID);
@@ -240,20 +254,22 @@ contract PartyBid {
     // Update NFT price 
     NFTResold = true;
     NFTResoldValue = ABDKMath64x64.mulu(
+      // Multiply the (bidShare of owner / total bidShare)
       ABDKMath64x64.divu(bidShares.owner.value, 100000000000000000000),
+      // By the amount received through the bid
       bid.amount
     );
 
     // Nullify proposal aggregate support to prevent resetting price via same proposal in future
     BidProposals[_proposalId].aggregateSupport = 0;
 
-    emit PartyExecuteSale(NFTResoldValue);
+    emit PartyExecuteSale(NFTResoldValue); // Emit NFT sale price
   }
 
   // ============ Exit the DAO ============
 
   /**
-   * Exit DAO if bid was won, and NFT was resold for NFTSalePrice
+   * Exit DAO if bid was won, and NFT was resold for NFTResoldValue
    */
   function _exitPostSale() internal {
     // Require NFT to have already have been resold
@@ -270,7 +286,7 @@ contract PartyBid {
           // by final NFT sale price
             NFTResoldValue)
     );
-    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false);
+    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false); // Emit exit event
 
     // Nullify member DAO share
     daoStakes[msg.sender] = 0;
@@ -289,7 +305,7 @@ contract PartyBid {
     // Transfer wETH from contract to DAO member and emit event
     IWETH(wETHAddress).transferFrom(address(this), msg.sender, daoStakes[msg.sender]);
     currentRaisedAmount = currentRaisedAmount.sub(daoStakes[msg.sender]);
-    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], true);
+    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], true); // Emit exit event
 
     // Nullify member DAO share
     daoStakes[msg.sender] = 0;
@@ -307,7 +323,7 @@ contract PartyBid {
     // Transfer ETH from contract to DAO member and emit event
     payable(msg.sender).transfer(daoStakes[msg.sender]);
     currentRaisedAmount = currentRaisedAmount.sub(daoStakes[msg.sender]);
-    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false);
+    emit PartyMemberExited(msg.sender, daoStakes[msg.sender], false); // Emit exit event
 
     // Nullify member DAO share
     daoStakes[msg.sender] = 0;
