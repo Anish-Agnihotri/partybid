@@ -1,6 +1,4 @@
 <img src="https://i.imgur.com/HYb9lcg.png" alt="PartyBid logo" width="200" />
-<br />
-<br />
 
 ## Introduction
 
