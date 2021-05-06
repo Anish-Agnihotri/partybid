@@ -244,6 +244,8 @@ contract PartyBid {
     
     // Ensure that bid amount has not changed 
     require(BidProposals[_proposalId].amount == bid.amount, "PartyBid: Bid amount has changed during proposal voting.");
+    // Ensure that bid currency is still in wETH
+    require(bid.currency == wETHAddress, "PartyBid: Bidder has bid in a non-wETH token.");
 
     // Collect bidshares to calculate NFTResoldValue
     IMarket.BidShares memory bidShares = IMarket(IMediaModified(NFTAddress).marketContract()).bidSharesForToken(auctionID);
